@@ -1,0 +1,16 @@
+hydra:
+  run:
+    dir: outputs/${env.domain_name}/${now:%Y-%m-%d_%H-%M-%S}
+
+env:
+  domain_name: walker
+  task_name: run
+  seed: 1
+  frame_skip: 1
+  episode_length: 1000
+
+SAC:
+  n_timesteps: 1000000
+  policy: 'MlpPolicy'
+  learning_starts: 10000
+  target_entropy: auto
