@@ -368,7 +368,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         learning_starts: int,
         action_noise: Optional[ActionNoise] = None,
         n_envs: int = 1,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, List]:
         """
         Sample an action according to the exploration policy.
         This is either done by sampling the probability distribution of the policy,
@@ -388,11 +388,15 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         if self.num_timesteps < learning_starts and not (self.use_sde and self.use_sde_at_warmup):
             # Warmup phase
             unscaled_action = np.array([self.action_space.sample() for _ in range(n_envs)])
+            assert type(self.action_space) is gym.spaces.Box
+            assert len(self.action_space.shape) == 1
+            log_prob = np.array([np.log(1 / np.prod(self.action_space.high - self.action_space.low)).astype(np.float32) for _ in range(n_envs)]) # TODO: fix this
         else:
             # Note: when using continuous actions,
             # we assume that the policy uses tanh to scale the action
             # We use non-deterministic action in the case of SAC, for TD3, it does not matter
-            unscaled_action, _ = self.predict(self._last_obs, deterministic=False)
+            unscaled_action, _, *log_prob = self.predict(self._last_obs, deterministic=False)
+            log_prob = log_prob[0][0].cpu().numpy()
 
         # Rescale the action from [low, high] to [-1, 1]
         if isinstance(self.action_space, gym.spaces.Box):
@@ -409,7 +413,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             # Discrete case, no need to normalize or clip
             buffer_action = unscaled_action
             action = buffer_action
-        return action, buffer_action
+        return action, buffer_action, log_prob
 
     def _dump_logs(self) -> None:
         """
@@ -561,7 +565,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 self.actor.reset_noise(env.num_envs)
 
             # Select action randomly or according to policy
-            actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
+            actions, buffer_actions, log_prob = self._sample_action(learning_starts, action_noise, env.num_envs)
 
             # Rescale and perform action
             new_obs, rewards, dones, infos = env.step(actions)
@@ -579,6 +583,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             self._update_info_buffer(infos, dones)
 
             # Store data in replay buffer (normalized action and unnormalized observation)
+            for i, info in enumerate(infos): info['log_prob'] = log_prob[i]
             self._store_transition(replay_buffer, buffer_actions, new_obs, rewards, dones, infos)
 
             self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)

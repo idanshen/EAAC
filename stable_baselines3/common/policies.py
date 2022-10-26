@@ -299,7 +299,7 @@ class BasePolicy(BaseModel, ABC):
         state: Optional[Tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
         deterministic: bool = False,
-    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]], List]:
         """
         Get the policy action from an observation (and optional hidden state).
         Includes sugar-coating to handle different observations (e.g. normalizing images).
@@ -324,7 +324,7 @@ class BasePolicy(BaseModel, ABC):
         observation, vectorized_env = self.obs_to_tensor(observation)
 
         with th.no_grad():
-            actions = self._predict(observation, deterministic=deterministic)
+            actions, *log_prob = self._predict(observation, deterministic=deterministic)
         # Convert to numpy, and reshape to the original action shape
         actions = actions.cpu().numpy().reshape((-1,) + self.action_space.shape)
 
@@ -341,7 +341,7 @@ class BasePolicy(BaseModel, ABC):
         if not vectorized_env:
             actions = actions.squeeze(axis=0)
 
-        return actions, state
+        return actions, state, log_prob
 
     def scale_action(self, action: np.ndarray) -> np.ndarray:
         """

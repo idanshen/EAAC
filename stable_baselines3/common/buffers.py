@@ -777,3 +777,220 @@ class DictRolloutBuffer(RolloutBuffer):
             advantages=self.to_torch(self.advantages[batch_inds].flatten()),
             returns=self.to_torch(self.returns[batch_inds].flatten()),
         )
+
+class TrajectoryReplayBuffer(BaseBuffer):
+    """
+    Replay buffer used in off-policy algorithms like SAC/TD3.
+
+    :param buffer_size: Max number of element in the buffer
+    :param observation_space: Observation space
+    :param action_space: Action space
+    :param device: PyTorch device
+    :param n_envs: Number of parallel environments
+    :param optimize_memory_usage: Enable a memory efficient variant
+        of the replay buffer which reduces by almost a factor two the memory used,
+        at a cost of more complexity.
+        See https://github.com/DLR-RM/stable-baselines3/issues/37#issuecomment-637501195
+        and https://github.com/DLR-RM/stable-baselines3/pull/28#issuecomment-637559274
+        Cannot be used in combination with handle_timeout_termination.
+    :param handle_timeout_termination: Handle timeout termination (due to timelimit)
+        separately and treat the task as infinite horizon task.
+        https://github.com/DLR-RM/stable-baselines3/issues/284
+    """
+
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        trajectory_length: int,
+        device: Union[th.device, str] = "auto",
+        n_envs: int = 1,
+        optimize_memory_usage: bool = False,
+        handle_timeout_termination: bool = True,
+        save_log_prob: bool = False,
+    ):
+        super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
+
+        assert buffer_size % trajectory_length == 0
+        assert optimize_memory_usage is False, "currently not supported"
+
+        # Adjust buffer size
+        self.trajectory_length = trajectory_length
+        self.buffer_size = max(buffer_size // (n_envs*trajectory_length), 1)
+
+        # Check that the replay buffer can fit into the memory
+        if psutil is not None:
+            mem_available = psutil.virtual_memory().available
+
+        # there is a bug if both optimize_memory_usage and handle_timeout_termination are true
+        # see https://github.com/DLR-RM/stable-baselines3/issues/934
+        if optimize_memory_usage and handle_timeout_termination:
+            raise ValueError(
+                "ReplayBuffer does not support optimize_memory_usage = True "
+                "and handle_timeout_termination = True simultaneously."
+            )
+        self.optimize_memory_usage = optimize_memory_usage
+
+        self.observations = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs) + self.obs_shape, dtype=observation_space.dtype)
+
+        if optimize_memory_usage:
+            # `observations` contains also the next observation
+            self.next_observations = None
+        else:
+            self.next_observations = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs) + self.obs_shape, dtype=observation_space.dtype)
+
+        self.actions = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs, self.action_dim), dtype=action_space.dtype)
+
+        self.rewards = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs), dtype=np.float32)
+        self.dones = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs), dtype=np.float32)
+        # Handle timeouts termination properly if needed
+        # see https://github.com/DLR-RM/stable-baselines3/issues/284
+        self.handle_timeout_termination = handle_timeout_termination
+        self.timeouts = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs), dtype=np.float32)
+
+        self.save_log_prob = save_log_prob
+        if self.save_log_prob:
+            self.log_probs = np.zeros((self.buffer_size, self.trajectory_length, self.n_envs), dtype=np.float32)
+
+        if psutil is not None:
+            total_memory_usage = self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes
+
+            if self.next_observations is not None:
+                total_memory_usage += self.next_observations.nbytes
+
+            if total_memory_usage > mem_available:
+                # Convert to GB
+                total_memory_usage /= 1e9
+                mem_available /= 1e9
+                warnings.warn(
+                    "This system does not have apparently enough memory to store the complete "
+                    f"replay buffer {total_memory_usage:.2f}GB > {mem_available:.2f}GB"
+                )
+
+    def add(
+        self,
+        obs: np.ndarray,
+        next_obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        done: np.ndarray,
+        infos: List[Dict[str, Any]],
+    ) -> None:
+
+        # Reshape needed when using multiple envs with discrete observations
+        # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
+        if isinstance(self.observation_space, spaces.Discrete):
+            obs = obs.reshape((self.n_envs,) + self.obs_shape)
+            next_obs = next_obs.reshape((self.n_envs,) + self.obs_shape)
+
+        # Same, for actions
+        action = action.reshape((self.n_envs, self.action_dim))
+
+        trajectory_num = self.pos // self.trajectory_length
+        step_num = self.pos % self.trajectory_length
+        if step_num == self.trajectory_length - 1:
+            assert bool(done[0]) is True
+        else:
+            assert bool(done[0]) is False
+
+        # Copy to avoid modification by reference
+        self.observations[trajectory_num, step_num] = np.array(obs).copy()
+
+        if self.optimize_memory_usage:
+            self.observations[(self.pos + 1) % self.buffer_size] = np.array(next_obs).copy()
+        else:
+            self.next_observations[trajectory_num, step_num] = np.array(next_obs).copy()
+
+        self.actions[trajectory_num, step_num] = np.array(action).copy()
+        self.rewards[trajectory_num, step_num] = np.array(reward).copy()
+        self.dones[trajectory_num, step_num] = np.array(done).copy()
+
+        if self.handle_timeout_termination:
+            self.timeouts[trajectory_num, step_num] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+
+        if self.save_log_prob:
+            self.log_probs[trajectory_num, step_num] = np.array([info["log_prob"] for info in infos]).copy()
+
+        self.pos += 1
+        if trajectory_num == self.buffer_size and step_num == self.trajectory_length - 1:
+            self.full = True
+            self.pos = 0
+
+    def sample(self, batch_size: int, env: Optional[VecNormalize] = None) -> ReplayBufferSamples:
+        """
+        Sample elements from the replay buffer.
+        Custom sampling when using memory efficient variant,
+        as we should not sample the element with index `self.pos`
+        See https://github.com/DLR-RM/stable-baselines3/pull/28#issuecomment-637559274
+
+        :param batch_size: Number of element to sample
+        :param env: associated gym VecEnv
+            to normalize the observations/rewards when sampling
+        :return:
+        """
+        if not self.optimize_memory_usage:
+            if self.full:
+                upper_bound = self.buffer_size*self.trajectory_length
+            else :
+                upper_bound = self.pos - self.pos % self.trajectory_length
+            batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+
+        # Do not sample the element with index `self.pos` as the transitions is invalid
+        # (we use only one array to store `obs` and `next_obs`)
+        else:
+            if self.full:
+                batch_inds = (np.random.randint(1, self.buffer_size, size=batch_size) + self.pos) % self.buffer_size
+            else:
+                batch_inds = np.random.randint(0, self.pos, size=batch_size)
+        return self._get_samples(batch_inds, env=env)
+
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> ReplayBufferSamples:
+        # Sample randomly the env idx
+        env_indices = np.random.randint(0, high=self.n_envs, size=(len(batch_inds),))
+        trajectory_indices = batch_inds // self.trajectory_length
+        step_indices = batch_inds % self.trajectory_length
+
+        if self.optimize_memory_usage:
+            next_obs = self._normalize_obs(self.observations[(batch_inds + 1) % self.buffer_size, env_indices, :], env)
+        else:
+            next_obs = self._normalize_obs(self.next_observations[trajectory_indices, step_indices, env_indices, :], env)
+
+        data = (
+            self._normalize_obs(self.observations[trajectory_indices, step_indices, env_indices, :], env),
+            self.actions[trajectory_indices, step_indices, env_indices, :],
+            next_obs,
+            # Only use dones that are not due to timeouts
+            # deactivated by default (timeouts is initialized as an array of False)
+            (self.dones[trajectory_indices, step_indices, env_indices] * (1 - self.timeouts[trajectory_indices, step_indices, env_indices])).reshape(-1, 1),
+            self._normalize_reward(self.rewards[trajectory_indices, step_indices, env_indices].reshape(-1, 1), env),
+        )
+        if self.save_log_prob:
+            data = data + (self.log_probs[trajectory_indices, step_indices, env_indices])
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
+
+    def sample_trajectories(self, batch_size: int, env: Optional[VecNormalize] = None):
+        if self.full:
+            upper_bound = self.buffer_size
+        else:
+            upper_bound = self.pos // self.trajectory_length
+        trajectory_indices = np.random.randint(0, upper_bound, size=batch_size)
+        env_indices = np.random.randint(0, high=self.n_envs, size=(len(trajectory_indices),))
+
+        if self.optimize_memory_usage:
+            raise NotImplementedError
+        else:
+            next_obs = self._normalize_obs(self.next_observations[trajectory_indices, :, env_indices, :], env)
+
+        data = (
+            self._normalize_obs(self.observations[trajectory_indices, :, env_indices, :], env),
+            self.actions[trajectory_indices, :, env_indices, :],
+            next_obs,
+            # Only use dones that are not due to timeouts
+            # deactivated by default (timeouts is initialized as an array of False)
+            (self.dones[trajectory_indices, :, env_indices] * (1 - self.timeouts[trajectory_indices, :, env_indices])).reshape(-1, 1),
+            self._normalize_reward(self.rewards[trajectory_indices, :, env_indices].reshape(-1, 1), env),
+        )
+        if self.save_log_prob:
+            data = data + (self.log_probs[trajectory_indices, :, env_indices])
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))

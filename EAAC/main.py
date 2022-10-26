@@ -16,6 +16,8 @@ def main(cfg: DictConfig):
                 env=env,
                 learning_starts=cfg.SAC.learning_starts,
                 target_entropy=cfg.SAC.target_entropy,
+                train_freq=cfg.SAC.train_freq,
+                gradient_steps=cfg.SAC.gradient_steps,
                 verbose=1,
                 tensorboard_log=os.getcwd(),
                 )

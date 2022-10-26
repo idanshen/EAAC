@@ -14,3 +14,5 @@ SAC:
   policy: 'MlpPolicy'
   learning_starts: 10000
   target_entropy: auto
+  train_freq: 100
+  gradient_steps: 200
