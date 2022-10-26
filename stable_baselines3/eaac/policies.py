@@ -337,7 +337,10 @@ class SACPolicy(BasePolicy):
         return self._predict(obs, deterministic=deterministic)
 
     def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
-        return self.actor(observation, deterministic)
+        if deterministic:
+            return self.actor(observation, deterministic)
+        else:
+            return self.actor.action_log_prob(observation)
 
     def set_training_mode(self, mode: bool) -> None:
         """

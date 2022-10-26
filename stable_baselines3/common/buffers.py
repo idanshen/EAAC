@@ -966,7 +966,7 @@ class TrajectoryReplayBuffer(BaseBuffer):
             self._normalize_reward(self.rewards[trajectory_indices, step_indices, env_indices].reshape(-1, 1), env),
         )
         if self.save_log_prob:
-            data = data + (self.log_probs[trajectory_indices, step_indices, env_indices])
+            data = data + (self.log_probs[trajectory_indices, step_indices, env_indices].reshape(-1, 1),)
         return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
 
     def sample_trajectories(self, batch_size: int, env: Optional[VecNormalize] = None):

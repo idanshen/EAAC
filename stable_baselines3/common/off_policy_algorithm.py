@@ -396,6 +396,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             # we assume that the policy uses tanh to scale the action
             # We use non-deterministic action in the case of SAC, for TD3, it does not matter
             unscaled_action, _, *log_prob = self.predict(self._last_obs, deterministic=False)
+            assert log_prob != [[]]
             log_prob = log_prob[0][0].cpu().numpy()
 
         # Rescale the action from [low, high] to [-1, 1]

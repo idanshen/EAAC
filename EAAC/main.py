@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, EAAC
 import numpy as np
 from EAAC.wrappers import make
 import hydra
@@ -21,6 +21,15 @@ def main(cfg: DictConfig):
                 verbose=1,
                 tensorboard_log=os.getcwd(),
                 )
+    model = EAAC(policy=cfg.EAAC.policy,
+                 env=env,
+                 learning_starts=cfg.EAAC.learning_starts,
+                 target_entropy=cfg.EAAC.target_entropy,
+                 train_freq=cfg.EAAC.train_freq,
+                 gradient_steps=cfg.EAAC.gradient_steps,
+                 verbose=1,
+                 tensorboard_log=os.getcwd(),
+                 )
     model.learn(total_timesteps=cfg.SAC.n_timesteps)
     env.close()
 
