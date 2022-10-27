@@ -778,6 +778,7 @@ class DictRolloutBuffer(RolloutBuffer):
             returns=self.to_torch(self.returns[batch_inds].flatten()),
         )
 
+
 class TrajectoryReplayBuffer(BaseBuffer):
     """
     Replay buffer used in off-policy algorithms like SAC/TD3.
@@ -988,9 +989,9 @@ class TrajectoryReplayBuffer(BaseBuffer):
             next_obs,
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
-            (self.dones[trajectory_indices, :, env_indices] * (1 - self.timeouts[trajectory_indices, :, env_indices])).reshape(-1, 1),
-            self._normalize_reward(self.rewards[trajectory_indices, :, env_indices].reshape(-1, 1), env),
+            np.expand_dims(self.dones[trajectory_indices, :, env_indices] * (1 - self.timeouts[trajectory_indices, :, env_indices]), axis=2),
+            self._normalize_reward(np.expand_dims(self.rewards[trajectory_indices, :, env_indices], axis=2), env),
         )
         if self.save_log_prob:
-            data = data + (self.log_probs[trajectory_indices, :, env_indices])
+            data = data + (np.expand_dims(self.log_probs[trajectory_indices, :, env_indices], axis=2),)
         return ReplayBufferSamples(*tuple(map(self.to_torch, data)))

@@ -16,11 +16,12 @@ SAC:
   target_entropy: auto
   train_freq: 100
   gradient_steps: 200
+  gamma: 0.99
 
 EAAC:
   n_timesteps: 1000000
   policy: 'MlpPolicy'
   learning_starts: 10000
   target_entropy: auto
-  train_freq: 100
-  gradient_steps: 200
+  gradient_to_steps_ratio: 1
+  gamma: 0.99
