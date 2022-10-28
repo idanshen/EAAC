@@ -118,7 +118,7 @@ class EAAC(OffPolicyAlgorithm):
             tau,
             gamma,
             train_freq=(1, "episode"),
-            gradient_steps=gradient_to_steps_ratio*trajectory_length,
+            gradient_steps=2*gradient_to_steps_ratio*trajectory_length,
             action_noise=action_noise,
             replay_buffer_class=TrajectoryReplayBuffer,
             replay_buffer_kwargs={'trajectory_length': trajectory_length, 'save_log_prob': True},
@@ -286,19 +286,6 @@ class EAAC(OffPolicyAlgorithm):
                 ent_coef_loss.backward()
                 self.ent_coef_optimizer.step()
 
-        # OPE for policies
-        # replay_traj = self.replay_buffer.sample_trajectories(batch_size, env=self._vec_normalize_env)
-        # with th.no_grad():
-            # J_EA_est = self.collect_single_episode(env=self.eval_env, actor=self.EA_actor, action_noise=self.action_noise,)
-            # J_R_est = self.collect_single_episode(env=self.eval_env, actor=self.R_actor, action_noise=self.action_noise,)
-            # replay_traj_probs = th.exp(replay_traj.log_probs)
-            # _, EA_log_prob = self.EA_actor.action_log_prob(replay_traj.observations.reshape(batch_size * 1000, -1))
-            # EA_prob = th.exp(EA_log_prob.reshape(batch_size, 1000, -1))
-            # J_EA_est = th.mean(th.sum(EA_prob / replay_traj_probs * self.gamma_array * replay_traj.rewards, dim=1))
-            # _, R_log_prob = self.R_actor.action_log_prob(replay_traj.observations.reshape(batch_size * 1000, -1))
-            # R_prob = th.exp(R_log_prob.reshape(batch_size, 1000, -1))
-            # J_R_est = th.mean(th.sum(R_prob / replay_traj_probs * self.gamma_array * replay_traj.rewards, dim=1))
-
         self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
@@ -333,6 +320,7 @@ class EAAC(OffPolicyAlgorithm):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
+            self.policy = self.EA_policy
             rollout, J_EA_est = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
@@ -351,7 +339,7 @@ class EAAC(OffPolicyAlgorithm):
                 learning_starts=self.learning_starts,
                 replay_buffer=self.replay_buffer,
                 log_interval=log_interval,
-                save_results=False
+                # save_results=False
             )
             self.policy = self.EA_policy
 
@@ -545,3 +533,30 @@ class EAAC(OffPolicyAlgorithm):
 
         return critic_loss, actor_loss
 
+    def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: Optional[np.ndarray] = None) -> None:
+        """
+        Retrieve reward, episode length, episode success and update the buffer
+        if using Monitor wrapper or a GoalEnv.
+
+        :param infos: List of additional information about the transition.
+        :param dones: Termination signals
+        """
+        if dones is None:
+            dones = np.array([False] * len(infos))
+        for idx, info in enumerate(infos):
+            maybe_ep_info = info.get("episode")
+            maybe_is_success = info.get("is_success")
+            if maybe_ep_info is not None:
+                if self.policy == self.EA_policy:
+                    self.ep_info_buffer.extend([maybe_ep_info])
+                elif self.policy == self.R_policy:
+                    pass
+                else:
+                    raise ValueError
+            if maybe_is_success is not None and dones[idx]:
+                if self.policy == self.EA_policy:
+                    self.ep_success_buffer.extend(maybe_is_success)
+                elif self.policy == self.R_policy:
+                    pass
+                else:
+                    raise ValueError
