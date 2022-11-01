@@ -24,4 +24,4 @@ EAAC:
   learning_starts: 10000
   target_entropy: auto
   gradient_to_steps_ratio: 2
-  gamma: 0.999
+  gamma: 0.99

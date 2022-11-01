@@ -1,3 +1,4 @@
+from collections import deque
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
@@ -81,7 +82,6 @@ class EAAC(OffPolicyAlgorithm):
         self,
         policy: Union[str, Type[SACPolicy]],
         env: Union[GymEnv, str],
-        eval_env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule] = 3e-4,
         buffer_size: int = 1_000_000,  # 1e6
         learning_starts: int = 100,
@@ -134,6 +134,7 @@ class EAAC(OffPolicyAlgorithm):
             supported_action_spaces=(gym.spaces.Box),
             support_multi_env=True,
         )
+        self.entropy_update = 'new_method'
         self.trajectory_length = trajectory_length
         self.target_entropy = target_entropy
         self.log_ent_coef = None  # type: Optional[th.Tensor]
@@ -146,11 +147,8 @@ class EAAC(OffPolicyAlgorithm):
         if _init_setup_model:
             self._setup_model()
 
-        if eval_env is not None:
-            eval_env = maybe_make_env(eval_env, self.verbose)
-            eval_env = self._wrap_env(eval_env, self.verbose, True)
-            self.eval_env = eval_env
-
+        self.J_R_que = None
+        self.J_EA_que = None
         # self.gamma_array = th.Tensor([[[self.gamma**i,] for i in range(1000)],]).to(self.policy.device)
 
     def _setup_model(self) -> None:
@@ -188,8 +186,8 @@ class EAAC(OffPolicyAlgorithm):
                 assert init_value > 0.0, "The initial value of ent_coef must be greater than 0"
 
             # We save the log entropy coefficient for numerical stability but update the entropy coefficient itself
-            self.log_ent_coef = th.log(th.ones(1, device=self.device) * init_value).requires_grad_(True)
-            self.ent_coef_optimizer = th.optim.Adam([self.log_ent_coef], lr=self.lr_schedule(1))
+            self.log_ent_coef = th.log(th.ones(1, device=self.device) * init_value).requires_grad_(False)
+            self.ent_coef_optimizer = True # th.optim.Adam([self.log_ent_coef], lr=self.lr_schedule(1))
         else:
             # Force conversion to float
             # this will throw an error if a malformed string (different from 'auto')
@@ -210,13 +208,12 @@ class EAAC(OffPolicyAlgorithm):
         self.policy.set_training_mode(True)
         # Update optimizers learning rate
         optimizers = [self.EA_actor.optimizer, self.EA_critic.optimizer, self.R_actor.optimizer, self.R_critic.optimizer]
-        if self.ent_coef_optimizer is not None:
-            optimizers += [self.ent_coef_optimizer]
+        # if self.ent_coef_optimizer is not None:
+        #     optimizers += [self.ent_coef_optimizer]
 
         # Update learning rate according to lr schedule
         self._update_learning_rate(optimizers)
 
-        ent_coef_losses, ent_coefs = [], []
         EA_actor_losses, EA_critic_losses = [], []
         R_actor_losses, R_critic_losses = [], []
         # Policies optimization
@@ -225,7 +222,7 @@ class EAAC(OffPolicyAlgorithm):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
 
             if self.ent_coef_optimizer is not None:
-                ent_coef = th.exp(self.log_ent_coef.detach())
+                ent_coef = th.exp(self.log_ent_coef)
             else:
                 ent_coef = self.ent_coef_tensor
 
@@ -253,51 +250,15 @@ class EAAC(OffPolicyAlgorithm):
                 polyak_update(self.EA_batch_norm_stats, self.EA_batch_norm_stats_target, 1.0)
                 polyak_update(self.R_batch_norm_stats, self.R_batch_norm_stats_target, 1.0)
 
-        # Entropy coefficent optimization
-        for gradient_step in range(gradient_steps):
-            # Sample replay buffer
-            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
-
-            # We need to sample because `log_std` may have changed between two gradient steps
-            if self.use_sde:
-                self.EA_actor.reset_noise()
-
-            # Action by the current actor for the sampled state
-            actions_pi, log_prob = self.EA_actor.action_log_prob(replay_data.observations)
-            log_prob = log_prob.reshape(-1, 1)
-
-            ent_coef_loss = None
-            if self.ent_coef_optimizer is not None:
-                # Important: detach the variable from the graph
-                # so we don't change it with other losses
-                # see https://github.com/rail-berkeley/softlearning/issues/60
-                ent_coef = th.exp(self.log_ent_coef.detach())
-                ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()
-                ent_coef_losses.append(ent_coef_loss.item())
-            else:
-                ent_coef = self.ent_coef_tensor
-
-            ent_coefs.append(ent_coef.item())
-
-            # Optimize entropy coefficient, also called
-            # entropy temperature or alpha in the paper
-            if ent_coef_loss is not None:
-                self.ent_coef_optimizer.zero_grad()
-                ent_coef_loss.backward()
-                self.ent_coef_optimizer.step()
 
         self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("train/ent_coef", np.mean(ent_coefs))
         self.logger.record("train/EA_actor_loss", np.mean(EA_actor_losses))
         self.logger.record("train/EA_critic_loss", np.mean(EA_critic_losses))
         self.logger.record("train/R_actor_loss", np.mean(R_actor_losses))
         self.logger.record("train/R_critic_loss", np.mean(R_critic_losses))
-        # self.logger.record("train/J_EA_est", J_EA_est.item())
-        # self.logger.record("train/J_R_est", J_R_est.item())
-        if len(ent_coef_losses) > 0:
-            self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
+
 
     def learn(
         self: EAACSelf,
@@ -321,7 +282,7 @@ class EAAC(OffPolicyAlgorithm):
 
         while self.num_timesteps < total_timesteps:
             self.policy = self.EA_policy
-            rollout, J_EA_est = self.collect_rollouts(
+            rollout, J_EA = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
                 action_noise=self.action_noise,
@@ -331,7 +292,7 @@ class EAAC(OffPolicyAlgorithm):
                 log_interval=log_interval,
             )
             self.policy = self.R_policy
-            _, J_R_est = self.collect_rollouts(
+            _, J_R = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
                 action_noise=self.action_noise,
@@ -342,9 +303,16 @@ class EAAC(OffPolicyAlgorithm):
                 # save_results=False
             )
             self.policy = self.EA_policy
-
-            self.logger.record("train/J_EA_est", J_EA_est)
-            self.logger.record("train/J_R_est", J_R_est)
+            if self.J_R_que is None:
+                self.J_R_que = deque([J_R, J_R, J_R])
+            else:
+                self.J_R_que.append(J_R)
+                self.J_R_que.popleft()
+            if self.J_EA_que is None:
+                self.J_EA_que = deque([J_EA, J_EA, J_EA])
+            else:
+                self.J_EA_que.append(J_EA)
+                self.J_EA_que.popleft()
 
             if rollout.continue_training is False:
                 break
@@ -356,6 +324,17 @@ class EAAC(OffPolicyAlgorithm):
                 # Special case when the user passes `gradient_steps=0`
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
+                    J_EA_est = np.sum(np.array(self.J_EA_que) * [1, 2, 3]) / 6
+                    J_R_est = np.sum(np.array(self.J_R_que) * [1, 2, 3]) / 6
+                    ent_coefs, ent_coef_losses = self.update_entropy(batch_size=self.batch_size,
+                                                                     gradient_steps=gradient_steps,
+                                                                     J_EA_est=J_EA_est,
+                                                                     J_R_est=J_R_est)
+                    self.logger.record("train/ent_coef", np.mean(ent_coefs))
+                    if len(ent_coef_losses) > 0:
+                        self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
+                    self.logger.record("train/J_EA_est", J_EA_est)
+                    self.logger.record("train/J_R_est", J_R_est)
 
         callback.on_training_end()
 
@@ -513,7 +492,7 @@ class EAAC(OffPolicyAlgorithm):
 
         # Compute critic loss
         critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-
+        assert not th.isnan(critic_loss)
         # Optimize the critic
         critic.optimizer.zero_grad()
         critic_loss.backward()
@@ -525,7 +504,7 @@ class EAAC(OffPolicyAlgorithm):
         q_values_pi = th.cat(critic(replay_data.observations, actions_pi), dim=1)
         min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
         actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
-
+        assert not th.isnan(actor_loss)
         # Optimize the actor
         actor.optimizer.zero_grad()
         actor_loss.backward()
@@ -560,3 +539,65 @@ class EAAC(OffPolicyAlgorithm):
                     pass
                 else:
                     raise ValueError
+
+    def update_entropy(self, gradient_steps: int, batch_size: int, J_EA_est: float = None,  J_R_est: float = None, ) -> Tuple[List[th.Tensor], List[th.Tensor]]:
+        # Entropy coefficent optimization
+        if self.entropy_update == 'original_SAC':
+            ent_coef_losses, ent_coefs = [], []
+            for gradient_step in range(gradient_steps):
+                # Sample replay buffer
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+
+                # We need to sample because `log_std` may have changed between two gradient steps
+                if self.use_sde:
+                    self.EA_actor.reset_noise()
+
+                # Action by the current actor for the sampled state
+                actions_pi, log_prob = self.EA_actor.action_log_prob(replay_data.observations)
+                log_prob = log_prob.reshape(-1, 1)
+
+                ent_coef_loss = None
+                if self.ent_coef_optimizer is not None:
+                    # Important: detach the variable from the graph
+                    # so we don't change it with other losses
+                    # see https://github.com/rail-berkeley/softlearning/issues/60
+                    ent_coef = th.exp(self.log_ent_coef.detach())
+                    ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()
+                    ent_coef_losses.append(ent_coef_loss.item())
+                else:
+                    ent_coef = self.ent_coef_tensor
+
+                ent_coefs.append(ent_coef.item())
+
+                # Optimize entropy coefficient, also called
+                # entropy temperature or alpha in the paper
+                if ent_coef_loss is not None:
+                    self.ent_coef_optimizer.zero_grad()
+                    ent_coef_loss.backward()
+                    self.ent_coef_optimizer.step()
+
+                return ent_coefs, ent_coef_losses
+        elif self.entropy_update == 'new_method':
+            ent_coef_losses, ent_coefs = [], []
+            ent_coef_loss = None
+            if self.ent_coef_optimizer is not None:
+                ent_coef = th.exp(self.log_ent_coef.detach())
+                ent_coef_grad = (J_EA_est - J_R_est)
+                ent_coef_losses.append(ent_coef_grad)
+            else:
+                ent_coef = self.ent_coef_tensor
+
+            ent_coefs.append(ent_coef.item())
+
+            # Optimize entropy coefficient, also called
+            # entropy temperature or alpha in the paper
+            # if ent_coef_loss is not None:
+            #     self.ent_coef_optimizer.zero_grad()
+            #     ent_coef_loss.backward()
+            #     self.ent_coef_optimizer.step()
+            beta = 0.001
+            self.log_ent_coef = th.log(th.clip(th.exp(self.log_ent_coef) + beta * ent_coef_grad, 0.001, 4))
+
+            return ent_coefs, ent_coef_losses
+        else:
+            raise ValueError("self.entropy_update must be either original_SAC or new_method")

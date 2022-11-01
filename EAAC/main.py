@@ -11,7 +11,6 @@ import os
 @hydra.main(config_path="config", config_name="test.yaml")
 def main(cfg: DictConfig):
     env = make(**cfg.env)
-    eval_env = make(**cfg.env)
     # model = SAC(policy=cfg.SAC.policy,
     #             env=env,
     #             learning_starts=cfg.SAC.learning_starts,
@@ -24,7 +23,6 @@ def main(cfg: DictConfig):
     #             )
     model = EAAC(policy=cfg.EAAC.policy,
                  env=env,
-                 eval_env=eval_env,
                  learning_starts=cfg.EAAC.learning_starts,
                  target_entropy=cfg.EAAC.target_entropy,
                  trajectory_length=cfg.env.episode_length,
