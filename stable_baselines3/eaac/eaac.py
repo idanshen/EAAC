@@ -117,7 +117,7 @@ class EAAC(OffPolicyAlgorithm):
             batch_size,
             tau,
             gamma,
-            train_freq=(1, "episode"),
+            train_freq=(10, "episode"),
             gradient_steps=2*gradient_to_steps_ratio*trajectory_length,
             action_noise=action_noise,
             replay_buffer_class=TrajectoryReplayBuffer,
