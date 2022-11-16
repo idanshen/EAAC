@@ -1,4 +1,3 @@
-from collections import deque
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
@@ -146,10 +145,6 @@ class EAAC(OffPolicyAlgorithm):
 
         if _init_setup_model:
             self._setup_model()
-
-        self.J_R_que = None
-        self.J_EA_que = None
-        # self.gamma_array = th.Tensor([[[self.gamma**i,] for i in range(1000)],]).to(self.policy.device)
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -303,16 +298,8 @@ class EAAC(OffPolicyAlgorithm):
                 # save_results=False
             )
             self.policy = self.EA_policy
-            if self.J_R_que is None:
-                self.J_R_que = deque([J_R, J_R, J_R])
-            else:
-                self.J_R_que.append(J_R)
-                self.J_R_que.popleft()
-            if self.J_EA_que is None:
-                self.J_EA_que = deque([J_EA, J_EA, J_EA])
-            else:
-                self.J_EA_que.append(J_EA)
-                self.J_EA_que.popleft()
+            J_R_est = J_R
+            J_EA_est = J_EA
 
             if rollout.continue_training is False:
                 break
@@ -324,8 +311,6 @@ class EAAC(OffPolicyAlgorithm):
                 # Special case when the user passes `gradient_steps=0`
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
-                    J_EA_est = np.sum(np.array(self.J_EA_que) * [1, 2, 3]) / 6
-                    J_R_est = np.sum(np.array(self.J_R_que) * [1, 2, 3]) / 6
                     ent_coefs, ent_coef_losses = self.update_entropy(batch_size=self.batch_size,
                                                                      gradient_steps=gradient_steps,
                                                                      J_EA_est=J_EA_est,
