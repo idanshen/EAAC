@@ -8,8 +8,9 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 
+from stable_baselines3 import HerReplayBuffer
 from stable_baselines3.common.base_class import maybe_make_env
-from stable_baselines3.common.buffers import ReplayBuffer, TrajectoryReplayBuffer
+from stable_baselines3.common.buffers import ReplayBuffer, TrajectoryReplayBuffer, DictReplayBuffer
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import BasePolicy
@@ -116,7 +117,7 @@ class EAAC(OffPolicyAlgorithm):
             batch_size,
             tau,
             gamma,
-            train_freq=(1, "episode"),
+            train_freq=(10, "episode"),
             gradient_steps=2*gradient_to_steps_ratio*trajectory_length,
             action_noise=action_noise,
             replay_buffer_class=TrajectoryReplayBuffer,
@@ -137,6 +138,7 @@ class EAAC(OffPolicyAlgorithm):
         self.trajectory_length = trajectory_length
         self.target_entropy = target_entropy
         self.log_ent_coef = None  # type: Optional[th.Tensor]
+        self.R_replay_buffer = None  # type: Optional[ReplayBuffer]
         # Entropy coefficient / Entropy temperature
         # Inverse of the reward scale
         self.ent_coef = ent_coef
@@ -149,6 +151,49 @@ class EAAC(OffPolicyAlgorithm):
     def _setup_model(self) -> None:
         super()._setup_model()
 
+        # Set replay buffer for R_policy
+        # Use DictReplayBuffer if needed
+        if self.replay_buffer_class is None:
+            if isinstance(self.observation_space, gym.spaces.Dict):
+                self.replay_buffer_class = DictReplayBuffer
+            else:
+                self.replay_buffer_class = ReplayBuffer
+
+        elif self.replay_buffer_class == HerReplayBuffer:
+            assert self.env is not None, "You must pass an environment when using `HerReplayBuffer`"
+
+            # If using offline sampling, we need a classic replay buffer too
+            if self.replay_buffer_kwargs.get("online_sampling", True):
+                replay_buffer = None
+            else:
+                replay_buffer = DictReplayBuffer(
+                    self.buffer_size,
+                    self.observation_space,
+                    self.action_space,
+                    device=self.device,
+                    optimize_memory_usage=self.optimize_memory_usage,
+                )
+
+            self.R_replay_buffer = HerReplayBuffer(
+                self.env,
+                self.buffer_size,
+                device=self.device,
+                replay_buffer=replay_buffer,
+                **self.replay_buffer_kwargs,
+            )
+
+        if self.R_replay_buffer is None:
+            self.R_replay_buffer = self.replay_buffer_class(
+                self.buffer_size,
+                self.observation_space,
+                self.action_space,
+                device=self.device,
+                n_envs=self.n_envs,
+                optimize_memory_usage=self.optimize_memory_usage,
+                **self.replay_buffer_kwargs,
+            )
+
+        # Create R_policy
         self.R_policy = self.policy_class(  # pytype:disable=not-instantiable
             self.observation_space,
             self.action_space,
@@ -229,6 +274,7 @@ class EAAC(OffPolicyAlgorithm):
             EA_critic_losses.append(critic_loss.item())
             EA_actor_losses.append(actor_loss.item())
 
+            replay_data = self.R_replay_buffer.sample(batch_size, env=self._vec_normalize_env)
             critic_loss, actor_loss = self.update_step(replay_data=replay_data,
                                                        ent_coef=th.zeros_like(ent_coef),
                                                        actor=self.R_actor,
@@ -244,7 +290,6 @@ class EAAC(OffPolicyAlgorithm):
                 # Copy running stats, see GH issue #996
                 polyak_update(self.EA_batch_norm_stats, self.EA_batch_norm_stats_target, 1.0)
                 polyak_update(self.R_batch_norm_stats, self.R_batch_norm_stats_target, 1.0)
-
 
         self._n_updates += gradient_steps
 
@@ -293,9 +338,8 @@ class EAAC(OffPolicyAlgorithm):
                 action_noise=self.action_noise,
                 callback=callback,
                 learning_starts=self.learning_starts,
-                replay_buffer=self.replay_buffer,
+                replay_buffer=self.R_replay_buffer,
                 log_interval=log_interval,
-                # save_results=False
             )
             self.policy = self.EA_policy
             J_R_est = J_R
@@ -377,7 +421,7 @@ class EAAC(OffPolicyAlgorithm):
         callback.on_rollout_start()
         continue_training = True
         self.env.reset()
-
+        cum_reward_list = []
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -434,10 +478,12 @@ class EAAC(OffPolicyAlgorithm):
 
                     # Currently support only single env
                     cum_reward = infos[idx]['episode']['r']
+                    cum_reward_list.append(cum_reward)
+                    save_results = False
 
         callback.on_rollout_end()
 
-        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), cum_reward
+        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), np.mean(cum_reward_list)
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["EA_actor", "EA_critic", "EA_critic_target", "R_actor", "R_critic", "R_critic_target"]
