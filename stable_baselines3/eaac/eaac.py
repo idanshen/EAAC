@@ -85,7 +85,7 @@ class EAAC(OffPolicyAlgorithm):
         learning_rate: Union[float, Schedule] = 3e-4,
         buffer_size: int = 1_000_000,  # 1e6
         learning_starts: int = 100,
-        batch_size: int = 512,
+        batch_size: int = 256,
         tau: float = 0.005,
         gamma: float = 0.99,
         trajectory_length: int=1000,
@@ -162,21 +162,10 @@ class EAAC(OffPolicyAlgorithm):
         )
         self.R_policy = self.R_policy.to(self.device)
 
-        self.EA_Q_policy = self.policy_class(  # pytype:disable=not-instantiable
-            self.observation_space,
-            self.action_space,
-            self.lr_schedule,
-            **self.policy_kwargs,  # pytype:disable=not-instantiable
-        )
-        self.EA_Q_policy = self.EA_Q_policy.to(self.device)
-
-
         self._create_aliases()
         # Running mean and running var
         self.EA_batch_norm_stats = get_parameters_by_name(self.EA_critic, ["running_"])
         self.EA_batch_norm_stats_target = get_parameters_by_name(self.EA_critic_target, ["running_"])
-        self.EA_Q_batch_norm_stats = get_parameters_by_name(self.EA_Q_critic, ["running_"])
-        self.EA_Q_batch_norm_stats_target = get_parameters_by_name(self.EA_Q_critic_target, ["running_"])
         self.R_batch_norm_stats = get_parameters_by_name(self.R_critic, ["running_"])
         self.R_batch_norm_stats_target = get_parameters_by_name(self.R_critic_target, ["running_"])
         # Target entropy is used when learning the entropy coefficient
@@ -210,8 +199,6 @@ class EAAC(OffPolicyAlgorithm):
         self.EA_actor = self.EA_policy.actor
         self.EA_critic = self.EA_policy.critic
         self.EA_critic_target = self.EA_policy.critic_target
-        self.EA_Q_critic = self.EA_Q_policy.critic
-        self.EA_Q_critic_target = self.EA_Q_policy.critic_target
         self.R_actor = self.R_policy.actor
         self.R_critic = self.R_policy.critic
         self.R_critic_target = self.R_policy.critic_target
@@ -220,7 +207,7 @@ class EAAC(OffPolicyAlgorithm):
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
         # Update optimizers learning rate
-        optimizers = [self.EA_actor.optimizer, self.EA_critic.optimizer, self.EA_Q_critic.optimizer, self.R_actor.optimizer, self.R_critic.optimizer]
+        optimizers = [self.EA_actor.optimizer, self.EA_critic.optimizer, self.R_actor.optimizer, self.R_critic.optimizer]
         # if self.ent_coef_optimizer is not None:
         #     optimizers += [self.ent_coef_optimizer]
 
@@ -255,31 +242,18 @@ class EAAC(OffPolicyAlgorithm):
             R_critic_losses.append(critic_loss.item())
             R_actor_losses.append(actor_loss.item())
 
-            self.update_critic(replay_data=replay_data,
-                               ent_coef=th.zeros_like(ent_coef),
-                               actor=self.EA_actor,
-                               critic=self.EA_Q_critic,
-                               critic_target=self.EA_Q_critic_target)
-
             # Update target networks
             if gradient_step % self.target_update_interval == 0:
                 polyak_update(self.EA_critic.parameters(), self.EA_critic_target.parameters(), self.tau)
-                polyak_update(self.EA_Q_critic.parameters(), self.EA_Q_critic_target.parameters(), self.tau)
                 polyak_update(self.R_critic.parameters(), self.R_critic_target.parameters(), self.tau)
                 # Copy running stats, see GH issue #996
                 polyak_update(self.EA_batch_norm_stats, self.EA_batch_norm_stats_target, 1.0)
-                polyak_update(self.EA_Q_batch_norm_stats, self.EA_Q_batch_norm_stats_target, 1.0)
                 polyak_update(self.R_batch_norm_stats, self.R_batch_norm_stats_target, 1.0)
 
-        initial_states = self.replay_buffer.sample_trajectories(256, env=self._vec_normalize_env).observations[:, 0, :]
-        J_R_Q_est = self.estimate_objective(initial_states, self.R_actor, self.R_critic_target).cpu().numpy()
-        J_EA_Q_est = self.estimate_objective(initial_states, self.EA_actor, self.EA_Q_critic_target).cpu().numpy()
+
         self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("train/J_R_Q_est", np.mean(J_R_Q_est))
-        self.logger.record("train/J_EA_Q_est", np.mean(J_EA_Q_est))
-        self.logger.record("train/J_sign_Q_est", np.sign(np.mean(J_EA_Q_est)-np.mean(J_R_Q_est)))
         self.logger.record("train/EA_actor_loss", np.mean(EA_actor_losses))
         self.logger.record("train/EA_critic_loss", np.mean(EA_critic_losses))
         self.logger.record("train/R_actor_loss", np.mean(R_actor_losses))
@@ -328,7 +302,6 @@ class EAAC(OffPolicyAlgorithm):
                 log_interval=log_interval,
                 # save_results=False
             )
-
             self.policy = self.EA_policy
             if self.J_R_que is None:
                 self.J_R_que = deque([J_R, J_R, J_R])
@@ -362,8 +335,6 @@ class EAAC(OffPolicyAlgorithm):
                         self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
                     self.logger.record("train/J_EA_est", J_EA_est)
                     self.logger.record("train/J_R_est", J_R_est)
-                    self.logger.record("train/J_EA_est", J_EA_est)
-                    self.logger.record("train/J_sign_est", np.sign(J_EA_est-J_R_est))
 
         callback.on_training_end()
 
@@ -421,7 +392,7 @@ class EAAC(OffPolicyAlgorithm):
         callback.on_rollout_start()
         continue_training = True
         self.env.reset()
-        cum_reward = []
+
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -477,11 +448,11 @@ class EAAC(OffPolicyAlgorithm):
                             self._dump_logs()
 
                     # Currently support only single env
-                    cum_reward.append(infos[idx]['episode']['r'])
+                    cum_reward = infos[idx]['episode']['r']
 
         callback.on_rollout_end()
 
-        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), np.mean(cum_reward)
+        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), cum_reward
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["EA_actor", "EA_critic", "EA_critic_target", "R_actor", "R_critic", "R_critic_target"]
@@ -494,30 +465,6 @@ class EAAC(OffPolicyAlgorithm):
         else:
             saved_pytorch_variables = ["ent_coef_tensor"]
         return state_dicts, saved_pytorch_variables
-
-    def update_critic(self, replay_data: ReplayBufferSamples, actor: nn.Module, critic: nn.Module, critic_target: nn.Module, ent_coef: th.Tensor):
-        with th.no_grad():
-            # Select action according to policy
-            next_actions, next_log_prob = actor.action_log_prob(replay_data.next_observations)
-            # Compute the next Q values: min over all critics targets
-            next_q_values = th.cat(critic_target(replay_data.next_observations, next_actions), dim=1)
-            next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
-            # add entropy term
-            next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
-            # td error + entropy term
-            target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
-
-        # Get current Q-values estimates for each critic network
-        # using action from the replay buffer
-        current_q_values = critic(replay_data.observations, replay_data.actions)
-
-        # Compute critic loss
-        critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-        assert not th.isnan(critic_loss)
-        # Optimize the critic
-        critic.optimizer.zero_grad()
-        critic_loss.backward()
-        critic.optimizer.step()
 
     def update_step(self, replay_data: ReplayBufferSamples, actor: nn.Module, critic: nn.Module, critic_target: nn.Module, ent_coef: th.Tensor):
         # We need to sample because `log_std` may have changed between two gradient steps
@@ -654,12 +601,3 @@ class EAAC(OffPolicyAlgorithm):
             return ent_coefs, ent_coef_losses
         else:
             raise ValueError("self.entropy_update must be either original_SAC or new_method")
-
-    def estimate_objective(self, initial_states, actor, critic_target):
-        with th.no_grad():
-            # Select action according to policy
-            actions, log_prob = actor.action_log_prob(initial_states)
-            # Compute the next Q values: min over all critics targets
-            q_values = th.cat(critic_target(initial_states, actions), dim=1)
-            q_values, _ = th.min(q_values, dim=1, keepdim=True)
-            return th.mean(q_values, dim=0)
