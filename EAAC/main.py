@@ -15,6 +15,7 @@ def main(cfg: DictConfig):
     #             env=env,
     #             learning_starts=cfg.SAC.learning_starts,
     #             target_entropy=cfg.SAC.target_entropy,
+    #             ent_coef=cfg.SAC.ent_coef,
     #             train_freq=cfg.SAC.train_freq,
     #             gradient_steps=cfg.SAC.gradient_steps,
     #             gamma=cfg.SAC.gamma,
@@ -31,7 +32,7 @@ def main(cfg: DictConfig):
                  verbose=1,
                  tensorboard_log=os.getcwd(),
                  )
-    model.learn(total_timesteps=cfg.SAC.n_timesteps)
+    model.learn(total_timesteps=cfg.EAAC.n_timesteps)
     env.close()
 
 

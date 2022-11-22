@@ -116,7 +116,7 @@ class EAAC(OffPolicyAlgorithm):
             batch_size,
             tau,
             gamma,
-            train_freq=(1, "episode"),
+            train_freq=(10, "episode"),
             gradient_steps=2*gradient_to_steps_ratio*trajectory_length,
             action_noise=action_noise,
             replay_buffer_class=TrajectoryReplayBuffer,
@@ -295,7 +295,6 @@ class EAAC(OffPolicyAlgorithm):
                 learning_starts=self.learning_starts,
                 replay_buffer=self.replay_buffer,
                 log_interval=log_interval,
-                # save_results=False
             )
             self.policy = self.EA_policy
             J_R_est = J_R
@@ -335,7 +334,7 @@ class EAAC(OffPolicyAlgorithm):
         learning_starts: int = 0,
         log_interval: Optional[int] = None,
         save_results: bool = True,
-    ) -> Tuple[RolloutReturn, float]:
+    ) -> Tuple[RolloutReturn, np.array]:
         """
         Collect experiences and store them into a ``ReplayBuffer``.
 
@@ -377,6 +376,7 @@ class EAAC(OffPolicyAlgorithm):
         callback.on_rollout_start()
         continue_training = True
         self.env.reset()
+        cum_reward_list = []
 
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
@@ -434,10 +434,12 @@ class EAAC(OffPolicyAlgorithm):
 
                     # Currently support only single env
                     cum_reward = infos[idx]['episode']['r']
+                    cum_reward_list.append(cum_reward)
+                    save_results = False
 
         callback.on_rollout_end()
 
-        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), cum_reward
+        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), np.mean(cum_reward_list)
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["EA_actor", "EA_critic", "EA_critic_target", "R_actor", "R_critic", "R_critic_target"]
@@ -574,14 +576,8 @@ class EAAC(OffPolicyAlgorithm):
 
             ent_coefs.append(ent_coef.item())
 
-            # Optimize entropy coefficient, also called
-            # entropy temperature or alpha in the paper
-            # if ent_coef_loss is not None:
-            #     self.ent_coef_optimizer.zero_grad()
-            #     ent_coef_loss.backward()
-            #     self.ent_coef_optimizer.step()
-            beta = 0.001
-            self.log_ent_coef = th.log(th.clip(th.exp(self.log_ent_coef) + beta * ent_coef_grad, 0.001, 4))
+            beta = 0.003
+            self.log_ent_coef = th.clip((self.log_ent_coef) + beta * ent_coef_grad, -5, 5)
 
             return ent_coefs, ent_coef_losses
         else:
