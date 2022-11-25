@@ -14,8 +14,9 @@ SAC:
   policy: 'MlpPolicy'
   learning_starts: 10000
   target_entropy: auto
-  train_freq: 100
-  gradient_steps: 200
+  ent_coef: auto
+  train_freq: 2000
+  gradient_steps: 4000
   gamma: 0.99
 
 EAAC:
