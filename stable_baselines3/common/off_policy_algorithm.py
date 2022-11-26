@@ -143,29 +143,29 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         # For gSDE only
         self.use_sde_at_warmup = use_sde_at_warmup
 
-    def _convert_train_freq(self) -> None:
+    def _convert_freq(self, freq) -> TrainFreq:
         """
         Convert `train_freq` parameter (int or tuple)
         to a TrainFreq object.
         """
-        if not isinstance(self.train_freq, TrainFreq):
-            train_freq = self.train_freq
-
+        if not isinstance(freq, TrainFreq):
             # The value of the train frequency will be checked later
-            if not isinstance(train_freq, tuple):
-                train_freq = (train_freq, "step")
+            if not isinstance(freq, tuple):
+                freq = (freq, "step")
 
             try:
-                train_freq = (train_freq[0], TrainFrequencyUnit(train_freq[1]))
+                freq = (freq[0], TrainFrequencyUnit(freq[1]))
             except ValueError as e:
                 raise ValueError(
-                    f"The unit of the `train_freq` must be either 'step' or 'episode' not '{train_freq[1]}'!"
+                    f"The unit of the `train_freq` must be either 'step' or 'episode' not '{freq[1]}'!"
                 ) from e
 
-            if not isinstance(train_freq[0], int):
-                raise ValueError(f"The frequency of `train_freq` must be an integer and not {train_freq[0]}")
+            if not isinstance(freq[0], int):
+                raise ValueError(f"The frequency of `train_freq` must be an integer and not {freq[0]}")
 
-            self.train_freq = TrainFreq(*train_freq)
+            return TrainFreq(*freq)
+        else:
+            return freq
 
     def _setup_model(self) -> None:
         self._setup_lr_schedule()
@@ -221,7 +221,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         self.policy = self.policy.to(self.device)
 
         # Convert train freq parameter to TrainFreq object
-        self._convert_train_freq()
+        self.train_freq = self._convert_freq(self.train_freq)
 
     def save_replay_buffer(self, path: Union[str, pathlib.Path, io.BufferedIOBase]) -> None:
         """

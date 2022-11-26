@@ -1,56 +1,91 @@
 from matplotlib import pyplot as plt
 import numpy as np
 import tensorboard_reducer as tbr
+from scipy.interpolate import interp1d
 
 mean = {}
 std = {}
-for i in range(10):
-    input_event_dirs = ["/home/idanshen/EAAC/multirun/2022-10-21/18-28-20/"+str(i)+"/SAC_1/",
-                        "/home/idanshen/EAAC/multirun/2022-10-22/12-07-22/"+str(i)+"/SAC_1/",
-                        "/home/idanshen/EAAC/multirun/2022-10-23/01-37-08/"+str(i)+"/SAC_1/",
-                        "/home/idanshen/EAAC/multirun/2022-10-23/14-29-24/"+str(i)+"/SAC_1/",
-                        "/home/idanshen/EAAC/multirun/2022-10-24/14-47-03/"+str(i)+"/SAC_1/"
-                        ]
-    # where to write reduced TB events, each reduce operation will be in a separate subdirectory
-    tb_events_output_dir = "/home/idanshen/EAAC/multirun/"
-    csv_out_path = "/home/idanshen/EAAC/multirun/reduced_"+str(i)+".csv"
-    # whether to abort or overwrite when csv_out_path already exists
-    overwrite = False
-    reduce_ops = ("mean", "std")
 
-    events_dict = tbr.load_tb_events(input_event_dirs)
+# Walker-run
+# SAC runs with 200 gradient steps per 100 env steps
+# "SAC": ["/data/scratch/idanshen/EAAC/outputs/walker/2022-11-17_21-52-59/SAC_1",
+#         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-17_20-39-07/SAC_1",
+#         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-17_17-32-42/SAC_1",
+#         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-18_09-56-11/SAC_1",
+#         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-18_09-58-53/SAC_1",
+#         ],
+input_event_dirs = {
+                    "EIPO_SAC": ["/home/idanshen/EAAC/outputs/walker/2022-11-22_14-02-54/run_1",
+                                 "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-02-01/run_1",
+                                 "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-04-47/run_1",
+                                 "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-05-51/run_1",
+                                 "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-06-27/run_1"
+                    ],
+                    "data collection by best policy": ["/home/idanshen/EAAC/outputs/walker/2022-11-25_14-44-52/run_1",],
+                    "SAC": [
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-19-40/SAC_1",
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-19-57/SAC_1",
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-20-06/SAC_1",
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-20-12/SAC_1"
+                    ],
+                    }
+# Reacher-hard
 
-    # number of recorded tags. e.g. would be 3 if you recorded loss, MAE and R^2
-    n_scalars = len(events_dict)
-    n_steps, n_events = list(events_dict.values())[0].shape
+# SAC runs with 200 gradient steps per 100 env steps
+# "SAC": ["/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-18_10-08-13/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-18_10-10-10/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-18_12-55-45/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-18_12-56-48/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-18_12-58-37/SAC_1",
+#                     ],
 
-    print(
-        f"Loaded {n_events} TensorBoard runs with {n_scalars} scalars and {n_steps} steps each"
-    )
-    print(", ".join(events_dict))
+# input_event_dirs = {
+#                     "EIPO_SAC": ["/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-23_11-30-58/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-23_11-31-09/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-23_11-31-14/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-23_11-31-18/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-43-42/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-44-06/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-44-10/run_1",
+#                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-44-17/run_1",
+#                                  ],
+#                     "SAC": ["/home/idanshen/EAAC/outputs/reacher/2022-11-24_16-43-15/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-51/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-47/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-38/SAC_1",
+#                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-31/SAC_1",
+#                             ]
+#                     }
+x = np.linspace(0, 900000, 201)
+stats = {}
+for key in input_event_dirs.keys():
+    stats[key] = []
+    for exp in input_event_dirs[key]:
+        events_dict = tbr.load_tb_events([exp])
+        data = events_dict["rollout/ep_rew_mean"]
+        # data = events_dict["train/ent_coef"]
+        index = np.concatenate([[0], np.array(data.index)], axis=0)
+        values = np.concatenate([data.values[0], np.array(data.values).squeeze()], axis=0)
+        fit = interp1d(index, values)
+        stats[key].append(fit(x))
+    stats[key] = np.array(stats[key])
+    mean[str(key)] = stats[key].mean(axis=0)
+    std[str(key)] = stats[key].std(axis=0)
 
-    reduced_events = tbr.reduce_events(events_dict, reduce_ops)
-    mean[str(i-10)] = reduced_events["mean"]["rollout/ep_rew_mean"]
-    std[str(i-10)] = reduced_events["std"]["rollout/ep_rew_mean"]
-    # for op in reduce_ops:
-    #     print(f"Writing '{op}' reduction to '{tb_events_output_dir}-{op}'")
-
-    # tbr.write_tb_events(reduced_events, tb_events_output_dir, overwrite)
-
-    # print(f"Writing results to '{csv_out_path}'")
-    #
-    # tbr.write_data_file(reduced_events, csv_out_path, overwrite)
-    #
-    # print("Reduction complete")
 plt.clf()
-for j, color, facecolor in zip(['-2', '-6', '-10'], ['#3F7F4C','#1B2ACC','#CC4F1B'], ['#7EFF99', '#089FFF', '#FF9848']):
-    x = np.array(mean[j].index)
-    y = np.array(mean[j].values)
-    error = np.array(std[j].values)
-    plt.plot(x, y, 'k', color =color,label=j)
-    plt.fill_between(x, y-error, y+error,
-        alpha=0.3, facecolor=facecolor,
-        linewidth=0)
+colors = ['#3F7F4C', '#1B2ACC', '#CC4F1B']
+facecolors = ['#7EFF99', '#089FFF', '#FF9848']
+for i, k in enumerate(mean.keys()):
+    y = np.array(mean[k])
+    error = np.array(std[k])
+    plt.plot(x, y, 'k', color=colors[i], label=k)
+    plt.fill_between(x, y - error, y + error,
+                     alpha=0.3, facecolor=facecolors[i],
+                     linewidth=0)
+    plt.xlabel("env steps")
+    plt.ylabel("cumulative reward")
 plt.legend()
+# plt.axhline(y = 0.0, color = 'b', linestyle = 'dashed')
+# plt.yscale("log")
 plt.show()
 print("end")

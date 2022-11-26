@@ -116,7 +116,7 @@ class EAAC(OffPolicyAlgorithm):
             batch_size,
             tau,
             gamma,
-            train_freq=(10, "episode"),
+            train_freq=(1, "episode"),
             gradient_steps=2*gradient_to_steps_ratio*trajectory_length,
             action_noise=action_noise,
             replay_buffer_class=TrajectoryReplayBuffer,
@@ -142,7 +142,8 @@ class EAAC(OffPolicyAlgorithm):
         self.ent_coef = ent_coef
         self.target_update_interval = target_update_interval
         self.ent_coef_optimizer = None
-
+        self.objective_evaluation_freq = (10, "episode")
+        self.objective_evaluation_freq = self._convert_freq(self.objective_evaluation_freq)
         if _init_setup_model:
             self._setup_model()
 
@@ -274,10 +275,15 @@ class EAAC(OffPolicyAlgorithm):
         )
 
         callback.on_training_start(locals(), globals())
+        ent_coef_losses = [1]  # Start data collection with EA_policy
 
         while self.num_timesteps < total_timesteps:
-            self.policy = self.EA_policy
-            rollout, J_EA = self.collect_rollouts(
+            # Data collection phase
+            if ent_coef_losses[0] > 0:  # Last evaluation EA_policy performed better
+                self.policy = self.EA_policy
+            else:  # Last evaluation R_policy performed better
+                self.policy = self.R_policy
+            rollout, _ = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
                 action_noise=self.action_noise,
@@ -285,25 +291,16 @@ class EAAC(OffPolicyAlgorithm):
                 learning_starts=self.learning_starts,
                 replay_buffer=self.replay_buffer,
                 log_interval=log_interval,
+                save_results=True
             )
-            self.policy = self.R_policy
-            _, J_R = self.collect_rollouts(
-                self.env,
-                train_freq=self.train_freq,
-                action_noise=self.action_noise,
-                callback=callback,
-                learning_starts=self.learning_starts,
-                replay_buffer=self.replay_buffer,
-                log_interval=log_interval,
-            )
-            self.policy = self.EA_policy
-            J_R_est = J_R
-            J_EA_est = J_EA
 
             if rollout.continue_training is False:
                 break
 
             if self.num_timesteps > 0 and self.num_timesteps > self.learning_starts:
+                # Objective difference evaluation phase
+                J_EA_est, J_R_est = self.estimate_objective_difference(callback)
+
                 # If no `gradient_steps` is specified,
                 # do as many gradients steps as steps performed during the rollout
                 gradient_steps = self.gradient_steps if self.gradient_steps >= 0 else rollout.episode_timesteps
@@ -440,6 +437,34 @@ class EAAC(OffPolicyAlgorithm):
         callback.on_rollout_end()
 
         return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training), np.mean(cum_reward_list)
+
+    def estimate_objective_difference(self, callback):
+        self.policy = self.EA_policy
+        rollout, J_EA = self.collect_rollouts(
+            self.env,
+            train_freq=self.objective_evaluation_freq,
+            action_noise=self.action_noise,
+            callback=callback,
+            learning_starts=self.learning_starts,
+            replay_buffer=self.replay_buffer,
+            log_interval=1,
+            save_results=False
+        )
+        self.policy = self.R_policy
+        _, J_R = self.collect_rollouts(
+            self.env,
+            train_freq=self.objective_evaluation_freq,
+            action_noise=self.action_noise,
+            callback=callback,
+            learning_starts=self.learning_starts,
+            replay_buffer=self.replay_buffer,
+            log_interval=1,
+            save_results=False
+        )
+        self.policy = self.EA_policy
+        J_R_est = J_R
+        J_EA_est = J_EA
+        return J_EA_est, J_R_est
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["EA_actor", "EA_critic", "EA_critic_target", "R_actor", "R_critic", "R_critic_target"]
