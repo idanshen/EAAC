@@ -15,18 +15,24 @@ std = {}
 #         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-18_09-58-53/SAC_1",
 #         ],
 input_event_dirs = {
-                    "EIPO_SAC": ["/home/idanshen/EAAC/outputs/walker/2022-11-22_14-02-54/run_1",
+                    "EIPO_SAC": [
+                        "/home/idanshen/EAAC/outputs/walker/2022-11-22_14-02-54/run_1",
                                  "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-02-01/run_1",
                                  "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-04-47/run_1",
                                  "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-05-51/run_1",
                                  "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-22_15-06-27/run_1"
                     ],
-                    "data collection by best policy": ["/home/idanshen/EAAC/outputs/walker/2022-11-25_14-44-52/run_1",],
+                    "data collection by best policy": ["/home/idanshen/EAAC/outputs/walker/2022-11-25_14-44-52/run_1",
+                                                       "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-26_00-37-15/run_1",
+                                                       "/home/idanshen/EAAC/outputs/walker/2022-11-26_18-37-59/run_1",
+                                                       "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-26_23-19-34/run_1",
+                                                       ],
                     "SAC": [
                         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-19-40/SAC_1",
                         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-19-57/SAC_1",
                         "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-20-06/SAC_1",
-                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-20-12/SAC_1"
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-25_18-20-12/SAC_1",
+                        "/data/scratch/idanshen/EAAC/outputs/walker/2022-11-26_00-36-21/SAC_1",
                     ],
                     }
 # Reacher-hard
@@ -49,6 +55,12 @@ input_event_dirs = {
 #                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-44-10/run_1",
 #                                  "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-24_16-44-17/run_1",
 #                                  ],
+# "data collection by best policy": ["/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-26_00-44-40/run_1",
+#                                    "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-26_00-41-22/run_1",
+#                                    "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-26_00-42-30/run_1",
+#                                    "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-26_00-48-28/run_1",
+#                                    "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-26_00-50-12/run_1",
+#                                   ],
 #                     "SAC": ["/home/idanshen/EAAC/outputs/reacher/2022-11-24_16-43-15/SAC_1",
 #                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-51/SAC_1",
 #                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-47/SAC_1",
@@ -56,7 +68,7 @@ input_event_dirs = {
 #                             "/data/scratch/idanshen/EAAC/outputs/reacher/2022-11-25_11-50-31/SAC_1",
 #                             ]
 #                     }
-x = np.linspace(0, 900000, 201)
+x = np.linspace(0, 950000, 201)
 stats = {}
 for key in input_event_dirs.keys():
     stats[key] = []

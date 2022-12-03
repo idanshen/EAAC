@@ -3,8 +3,8 @@ hydra:
     dir: outputs/${env.domain_name}/${now:%Y-%m-%d_%H-%M-%S}
 
 env:
-  domain_name: walker
-  task_name: run
+  domain_name: reacher
+  task_name: hard
   seed: 1
   frame_skip: 1
   episode_length: 1000
