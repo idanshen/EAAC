@@ -28,7 +28,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 
 @hydra.main(config_path="config", config_name="test.yaml")
 def main(cfg: DictConfig):
-    env = make("FetchReach-v2")
+    env = gym.make("FetchReach-v2")
     # model = SAC(policy=cfg.SAC.policy,
     #             env=env,
     #             learning_starts=cfg.SAC.learning_starts,
