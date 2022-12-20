@@ -13,16 +13,22 @@ sys.path.insert(0, parent_dir)
 from EAAC.wrappers import make
 from omegaconf import DictConfig
 from stable_baselines3 import SAC, EAAC, PPO
-import gym
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import gymnasium as gym
+
+
+import numpy as np
+
+from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.evaluation import evaluate_policy
 
 
 @hydra.main(config_path="config", config_name="test.yaml")
 def main(cfg: DictConfig):
-    env = make(**cfg.env)
+    env = make("FetchReach-v2")
     # model = SAC(policy=cfg.SAC.policy,
     #             env=env,
     #             learning_starts=cfg.SAC.learning_starts,
@@ -45,12 +51,12 @@ def main(cfg: DictConfig):
     #              tensorboard_log=os.getcwd(),
     #              )
     # model.learn(total_timesteps=cfg.EAAC.n_timesteps)
-    model = PPO(policy=cfg.PPO.policy,
+    model = RecurrentPPO("MlpLstmPolicy",
                  env=env,
                  verbose=1,
                  tensorboard_log=os.getcwd(),
                  )
-    model.learn(total_timesteps=cfg.PPO.n_timesteps)
+    model.learn(total_timesteps=5000)
     env.close()
 
 

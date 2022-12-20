@@ -26,3 +26,7 @@ EAAC:
   target_entropy: auto
   gradient_to_steps_ratio: 2
   gamma: 0.99
+
+PPO:
+  n_timesteps: 1000000
+  policy: 'MlpPolicy'
